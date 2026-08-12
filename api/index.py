@@ -1,21 +1,13 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import urllib.request
-from urllib.parse import urlparse
 
-# Dataset endpoints mapped to query parameters
-DATASETS = {
-    "1": "https://jtvxweb.pages.dev/den-ww.json",
-    "2": "https://jtvxweb.pages.dev/jstr4web.json",
-}
-
-# Default dataset when accessing the root URL without query parameters
-DEFAULT_URL = DATASETS["1"]
+# Directly set the single fast JSON endpoint
+TARGET_URL = "https://jtvxweb.pages.dev/den-ww.json"
 
 
 def parse_drm_key(ch):
     """Parses DRM keys across both dict formats and keyId/key parameters."""
-    # 1. Check for separate keyId and key fields (jstr4web format)
     key_id = ch.get("keyId") or ch.get("key_id") or ch.get("kid") or ""
     key = ch.get("key") or ch.get("k") or ch.get("license_key") or ""
 
@@ -30,7 +22,6 @@ def parse_drm_key(ch):
                 pass
         return f"{key_id}:{key}"
 
-    # 2. Check for dictionary/object in 'drm' or 'clearkey' (den-ww format)
     raw_drm = ch.get("drm") or ch.get("clearkey")
     if isinstance(raw_drm, dict):
         for k, v in raw_drm.items():
@@ -57,20 +48,10 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            # Parse incoming query string (?1 or ?2)
-            parsed_path = urlparse(self.path)
-            query = parsed_path.query.strip()
-
-            # Map parameter to endpoint
-            if query in DATASETS:
-                target_url = DATASETS[query]
-            else:
-                target_url = DEFAULT_URL
-
             req = urllib.request.Request(
-                target_url,
+                TARGET_URL,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
                 },
             )
 
@@ -106,6 +87,68 @@ class handler(BaseHTTPRequestHandler):
                 logo = ch.get("logo") or ch.get("tvg_logo") or ch.get("icon") or ""
                 mpd_link = (
                     ch.get("url")
+                    or ch.get("mpd")
+                    or ch.get("link")
+                    or ch.get("mpd_url")
+                    or ""
+                )
+
+                drm_key = parse_drm_key(ch)
+                token = ch.get("token") or ch.get("cookie") or ""
+
+                m3u_lines.append(
+                    f'#EXTINF:-1 tvg-id="{channel_id}" group-title="{category}" tvg-logo="{logo}",{name}'
+                )
+
+                if drm_key:
+                    m3u_lines.append(
+                        "#KODIPROP:inputstream.adaptive.license_type=clearkey"
+                    )
+                    m3u_lines.append(
+                        f"#KODIPROP:inputstream.adaptive.license_key={drm_key}"
+                    )
+
+                # Fixed User-Agent and Referrer tags
+                m3u_lines.append(
+                    "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+                )
+                m3u_lines.append(
+                    "#EXTVLCOPT:http-referrer=https://jtvxweb.pages.dev/"
+                )
+
+                # Construct dynamic JSON header dict including the channel token
+                exthttp_headers = {
+                    "origin": "https://jtvxweb.pages.dev",
+                    "referer": "https://jtvxweb.pages.dev/",
+                    "sec-ch-ua-platform": '"Windows"',
+                    "sec-fetch-dest": "empty",
+                    "sec-fetch-mode": "cors",
+                    "sec-fetch-site": "cross-site",
+                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+                    "cookie": token,
+                }
+
+                m3u_lines.append(f"#EXTHTTP:{json.dumps(exthttp_headers)}")
+                m3u_lines.append(f"{mpd_link}\n")
+
+            output = "\n".join(m3u_lines).strip()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header(
+                "Cache-Control", "no-cache, no-store, must-revalidate"
+            )
+            self.end_headers()
+            self.wfile.write(output.encode("utf-8"))
+
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            err_msg = f"#EXTM3U\n#ERROR: {str(e)}"
+            self.wfile.write(err_msg.encode("utf-8"))
                     or ch.get("mpd")
                     or ch.get("link")
                     or ch.get("mpd_url")
