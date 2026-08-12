@@ -3,19 +3,19 @@ import json
 import urllib.request
 from urllib.parse import urlparse
 
-# Define the dataset URLs mapped to query parameters
+# Dataset endpoints mapped to query parameters
 DATASETS = {
     "1": "https://jtvxweb.pages.dev/den-ww.json",
     "2": "https://jtvxweb.pages.dev/jstr4web.json",
 }
 
-# Default dataset when visiting the normal link with no query params
+# Default dataset when accessing the root URL without query parameters
 DEFAULT_URL = DATASETS["1"]
 
 
 def parse_drm_key(ch):
     """Parses DRM keys across both dict formats and keyId/key parameters."""
-    # Check for separate keyId and key fields (jstr4web.json format)
+    # 1. Check for separate keyId and key fields (jstr4web format)
     key_id = ch.get("keyId") or ch.get("key_id") or ch.get("kid") or ""
     key = ch.get("key") or ch.get("k") or ch.get("license_key") or ""
 
@@ -30,7 +30,7 @@ def parse_drm_key(ch):
                 pass
         return f"{key_id}:{key}"
 
-    # Check for dictionary/object in 'drm' or 'clearkey' (den-ww.json format)
+    # 2. Check for dictionary/object in 'drm' or 'clearkey' (den-ww format)
     raw_drm = ch.get("drm") or ch.get("clearkey")
     if isinstance(raw_drm, dict):
         for k, v in raw_drm.items():
@@ -57,11 +57,11 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            # Extract the query string from the request path
+            # Parse incoming query string (?1 or ?2)
             parsed_path = urlparse(self.path)
             query = parsed_path.query.strip()
 
-            # Dynamic endpoint switching based on query parameter (?1 or ?2)
+            # Map parameter to endpoint
             if query in DATASETS:
                 target_url = DATASETS[query]
             else:
@@ -74,7 +74,7 @@ class handler(BaseHTTPRequestHandler):
                 },
             )
 
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=12) as response:
                 data = json.loads(response.read().decode("utf-8"))
 
             m3u_lines = ["#EXTM3U\n"]
@@ -159,24 +159,3 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             err_msg = f"#EXTM3U\n#ERROR: {str(e)}"
             self.wfile.write(err_msg.encode("utf-8"))
-                m3u_lines.append(f"{mpd_link}\n")
-
-            output = "\n".join(m3u_lines).strip()
-
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header(
-                "Cache-Control", "no-cache, no-store, must-revalidate"
-            )
-            self.end_headers()
-            self.wfile.write(output.encode("utf-8"))
-
-        except Exception as e:
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            err_msg = f"#EXTM3U\n#ERROR: {str(e)}"
-            self.wfile.write(err_msg.encode("utf-8"))
-            
